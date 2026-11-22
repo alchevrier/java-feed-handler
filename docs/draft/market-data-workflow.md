@@ -27,10 +27,10 @@ for the two PCAP replay modes and synthetic Spock fixtures.
 
 ## Build toolchain
 
-Use the Gradle Wrapper and a Java toolchain targeting JDK 25 for compilation,
-tests, and JVM benchmarks on macOS and Linux. Pin the wrapper to a Gradle
-release that can run on JDK 25. See [ADR-004](../adr/ADR-004-jdk25-gradle-monorepo.md)
-for the proposed toolchain and monorepo module boundaries.
+Use the Gradle Wrapper and a Java toolchain targeting JDK 26 for compilation,
+tests, and JVM benchmarks on macOS and Linux. See
+[ADR-004](../adr/ADR-004-build-toolchain-monorepo.md) for the pinned Gradle
+release and monorepo module boundaries.
 
 ## Portable UDP thread topology
 
@@ -104,16 +104,18 @@ size changes.
   when the order is gone. Remove the `TreeMap` entry only when the total at
   that price reaches zero. The tree gives the highest occupied bid or lowest
   occupied ask without scanning every order.
-- **Tuned book:** Use a primitive map from order reference to slot index
-  and preallocated primitive arrays for order fields. Order references are
-  not array indexes. For price levels, a packed sorted array shifts
-  subsequent entries to close the hole when a level empties. A tick-indexed
-  array instead clears the fixed slot without shifting and finds the next
-  occupied tick by scanning or using a bitmap. The choice of level layout,
-  supported tick range, and lookup method remains open.
+- **Packed book:** Use an array-backed index from order reference to slot
+  and preallocated primitive arrays for order fields. Keep each side's
+  occupied levels sorted, best first. Binary search finds a price; inserting
+  or removing a level shifts the suffix. There is no predefined tick range.
+  Order and per-side level capacities are set at construction; exhaustion
+  rejects the new order without evicting resting orders.
 
 A partial execution that leaves the level occupied updates quantities in
 place in either design; it does not remove a price level or shift entries.
+The packed book doesn't allocate per event on successful updates, but
+requesting an immutable snapshot creates objects. See
+[ADR-001](../adr/ADR-001-reference-order-book.md) for the accepted layouts.
 
 The book thread owns all mutable state. Strategy consumes published snapshots
 rather than reading the mutable book. `ConcurrentHashMap` is unnecessary

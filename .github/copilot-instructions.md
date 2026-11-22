@@ -12,12 +12,18 @@ before implementing the change.
 
 # Definition of done
 
-Do not call a feature complete until the project builds on JDK 25 and the
-full test suite passes against the current changes.
+Do not call a feature complete until the project builds on JDK 26 and the
+full test suite passes against the current changes. For test-driven work,
+run the new test first and confirm it fails for the expected reason before
+implementing the feature.
 
 Run `./gradlew build` and any required verification tasks not wired into
 `build`. A targeted test run is useful during development but does not
 satisfy this gate. Do not skip required tests to get a green build.
 
-If compilation or a test fails, or verification cannot run, report the
-failure or blocker explicitly and leave the feature marked incomplete.
+For changes with a runnable application path, launch the application and
+exercise the changed behavior with a smoke test or documented demo. Report
+the build, test, and application-run outcomes explicitly. For library-only
+changes with no runnable path, say that the application check does not apply.
+If any required check fails or cannot run, report the blocker and leave the
+feature marked incomplete.

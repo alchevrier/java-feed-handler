@@ -18,7 +18,7 @@ fastest result from an unrepeatable run.
    the reference book through snapshot publication. Pass the component
    specs and a synthetic loopback check of the composed path, including
    ordered application, duplicate suppression, and visible stale status.
-   Get a green JDK 25 build before starting performance work.
+   Get a green JDK 26 build before starting performance work.
 2. **Measure the composed baseline.** Record the full UDP-to-snapshot
    reference run under steady and bursty load, with the reference
    implementations unchanged.
@@ -35,11 +35,9 @@ The first comparisons are:
    SPSC ring with direct mapping into preallocated slots. Keep offered load,
    capacity, and batch size constant.
 2. **Book layout:** Hold the handoff fixed. Compare `HashMap` + `TreeMap` with
-   primitive order slots and an order-reference-to-slot index. Vary active
+   packed sorted primitive price levels and an array-backed order index. Vary active
    order count and include both quantity-only updates and removals that
-   empty the best level. Defer the choice between packed sorted and
-   tick-indexed price levels; the former shifts entries, while the latter
-   reserves space for empty ticks.
+   empty the best level, where the packed layout may shift entries.
 
 Use JMH with multiple forks and warmup for isolated operations; measure
 allocation with `-prof gc`. For paced handoff and UDP-to-snapshot tests,

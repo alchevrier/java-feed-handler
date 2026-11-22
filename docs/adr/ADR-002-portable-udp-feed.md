@@ -50,7 +50,7 @@ flowchart TD
 The boxes show thread ownership; each queue sits between the producer and
 consumer threads it connects. Arbitration and mapping share a thread, so
 there is no queue between them. The `DatagramChannel` baseline uses the
-same JDK 25 code on macOS and Linux without application-level native
+same JDK 26 code on macOS and Linux without application-level native
 bindings, kernel bypass, or CPU pinning. Latency remains host-specific.
 
 ### Interface contracts

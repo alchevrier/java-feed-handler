@@ -1,4 +1,4 @@
-# ADR-004: Use JDK 25 and Gradle in a modular monorepo
+# ADR-004: Use JDK 26 and Gradle in a modular monorepo
 
 **Status: Accepted**
 
@@ -8,16 +8,17 @@ The feed handler should build and run on macOS and Linux. The same repository
 should hold the reusable contracts, the Nasdaq-specific pipeline, and the
 benchmarks so a change can update all three without coordinating releases.
 
-## Proposed decision
+## Decision
 
-**JDK 25.** Use JDK 25 as the long-term support baseline for compilation,
-tests, application runs, and benchmarks. HotSpot's
+**JDK 26.** Use JDK 26 for compilation, tests, application runs, and
+benchmarks, aligning the build toolchain with the development and IDE
+runtime. HotSpot's
 [compact object headers][headers] became a non-experimental, opt-in feature
 in JDK 25 (`-XX:+UseCompactObjectHeaders`). Smaller headers may reduce the
 footprint of heap objects in the reference implementation. Keep the default
 layout for the initial baseline and measure compact headers separately
-before making them a project default. JDK 25 is a supported baseline,
-not a claim that it is the fastest runtime for this workload.
+before making them a project default. This runtime choice does not imply a
+performance gain.
 
 [Virtual threads][virtual] have been available since JDK 21 and are an option
 for future blocking workloads. Keep dedicated platform threads for the
@@ -25,11 +26,11 @@ receivers, arbiter, and book writer in [ADR-002](ADR-002-portable-udp-feed.md).
 Virtual threads help scale blocking workloads; they do not by themselves
 make the hot path faster.
 
-**Gradle.** Pin the Gradle Wrapper to 9.3.0 and use a shared Java 25
-toolchain. The [compatibility matrix][compatibility] lists 9.1.0 as the
-first release that supports running on JDK 25. The wrapper makes builds
-consistent across machines, while
-incremental execution and build caching can shorten repeated builds.
+**Gradle.** Pin the Gradle Wrapper to 9.9.2, the current stable release at
+the time of the upgrade. It [supports running on JDK 26][compatibility],
+unlike the original Gradle 9.3.0 wrapper. Use the wrapper in the IDE as well
+as on the command line. Incremental execution and build caching can
+shorten repeated builds.
 Use Spock for correctness tests and keep JMH out of the application
 runtime dependencies.
 
@@ -51,9 +52,10 @@ Add source code and feature tests only when the corresponding ADR is approved.
 
 ## Alternatives and tradeoffs
 
-- **JDK 21:** Also an LTS and supports virtual threads, but lacks compact
-  object headers in upstream HotSpot. This project has no older-JDK
-  compatibility requirement.
+- **JDK 25:** The original LTS baseline also supports compact headers and
+  virtual threads. JDK 26 aligns with the installed development runtime
+  but is a non-LTS release, so the project will need to revisit the
+  toolchain sooner.
 - **Maven:** Also supports wrappers and multi-module builds. Gradle is the
   proposed choice for its incremental and cacheable task model and its
   ability to run individual subproject tasks.
@@ -64,7 +66,7 @@ Add source code and feature tests only when the corresponding ADR is approved.
 
 ## Acceptance criteria
 
-From the repository root, `./gradlew build` on JDK 25 compiles all implemented
+From the repository root, `./gradlew build` on JDK 26 compiles all implemented
 subprojects and runs the full correctness suite. A developer can also run
 an individual subproject's tests. Benchmarks run explicitly, not as part of
 the correctness gate. Benchmark reports record the actual JDK build and

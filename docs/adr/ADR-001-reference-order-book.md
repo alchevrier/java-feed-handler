@@ -1,6 +1,6 @@
-# ADR-001: Reconstruct an A/E/D order book before optimizing it
+# ADR-001: Reconstruct an A/E/D order book with two storage layouts
 
-**Status: Proposed**
+**Status: Accepted**
 
 ## Context
 
@@ -8,14 +8,55 @@ The first deliverable should prove that the JVM can reconstruct a displayed
 book from a deterministic event trace. It should not depend on UDP, a capture
 file, or a particular storage optimization.
 
-## Proposed decision
+## Decision
 
-Use the build toolchain proposed in [ADR-004](ADR-004-jdk25-gradle-monorepo.md).
+Use the build toolchain defined in [ADR-004](ADR-004-build-toolchain-monorepo.md).
 Define the book's observable contract first with data-driven Spock specs.
-Start with one instrument and
-one writer. Use a `HashMap<Long, Order>` for order lookup and a `TreeMap`
-per side for aggregated price levels. Keep prices as fixed-point integers
-and use `long` for level quantities.
+Start with one instrument and one writer. Both implementations consume
+`MarketMessage` through the same `OrderBook` interface and use `long` for
+level quantities:
+
+- **Reference:** `HashMap<Long, Order>` for order lookup and a `TreeMap` per
+  side for aggregated price levels.
+- **Packed arrays:** Separate preallocated price and quantity arrays per
+  side, sorted with the best price first, as in the
+  [C++ book][cpp-book]. Insert or shift only when a level is created or
+  removed. Unlike the add-only C++ book, keep primitive order slots and a
+  primitive array-backed order-reference index for executions and deletes.
+  Configure order and per-side level capacity at construction. Reject a
+  capacity breach before changing the book; do not evict resting orders.
+
+The book exposes an immutable top-of-book snapshot and reports whether it
+changed when applying an event. The caller handles publication. The
+reference stays available as the correctness and performance baseline.
+
+### First implementation step: `MarketMessage`
+
+Define `MarketMessage` in `:feed-core` as the read-only contract for a
+decoded order-book event. The book and synthetic fixtures use this contract
+first; the Nasdaq mapper will produce messages with the same meaning later.
+
+| Event | Fields required by the book |
+|---|---|
+| Add | Order reference, side, share quantity, and fixed-point display price (units of 1/10,000 for this slice). |
+| Execute | Order reference and executed share quantity (a delta). |
+| Delete | Order reference only; the book already knows what remains. |
+
+The order reference is an opaque 64-bit identifier, not an array index.
+Instrument identity is implicit in the first single-instrument book. ITCH
+type bytes, MoldUDP64 session and sequence, and A/B leg identity are not
+part of the book event. The pipeline can carry that metadata separately.
+
+Expose separate `Add`, `Execute`, and `Delete` views so a delete does not
+need a dummy price or quantity. Provide heap-backed factories for reference
+use. Add and execute quantities must be positive; an add must have a side
+and a non-negative fixed-point price. The book, not the message, will
+validate an execution against the order's remaining quantity.
+
+Read-only describes what the book can do with the message, not how its
+storage is allocated. A fresh object and a reusable slot can expose the
+same fields. The book copies any values it retains into its own state;
+it does not retain a reference to the message after applying it.
 
 ## Nasdaq TotalView-ITCH 5.0 messages
 
@@ -69,7 +110,7 @@ do not read mutable book state. Reject a duplicate live order reference, an
 execution or delete for an unknown order, or an execution outside the
 remaining quantity without mutating the book.
 
-Run the same behavioral contract against later implementations. This is a
+Run the same behavioral contract against both implementations. This is a
 subset of displayed-book reconstruction: `F` (attributed Add Order),
 `C` (Order Executed With Price), `X` (Order Cancel for a stated share
 quantity), and `U` (Order Replace with a new reference) also affect the book
@@ -77,8 +118,9 @@ but are deferred. Multi-instrument state and order matching are out of scope.
 
 ## Alternatives and tradeoffs
 
-- **Primitive arrays first:** Avoids some object and lookup overhead but
-  requires slot management and a price-level layout before a reference exists.
+- **Tick-indexed arrays:** Avoid shifts but reserve storage for unoccupied
+  ticks and require a predefined price grid and range. Packed levels need
+  no price band, at the cost of shifts when levels appear or disappear.
 - **`ConcurrentHashMap`:** Adds a concurrent lookup capability this workflow
   does not need and still would not make an order update and its level update
   atomic together.
@@ -88,9 +130,11 @@ but are deferred. Multi-instrument state and order matching are out of scope.
 Assert state and top-of-book after each step of `100 -> 60 -> gone`. Also
 cover a full fill, multiple orders at one level, removal of the last order at
 the best price with another level available, a fill away from the best,
-and invalid events that leave state unchanged. `./gradlew build` on JDK 25
-must pass the full test suite.
+and invalid events that leave state unchanged. `./gradlew build` on JDK 26
+must pass the full test suite. Also cover array capacity rejection and reuse
+after a delete or full execution.
 
 Source: [Order-book draft](../draft/market-data-workflow.md#order-book-partial-executions-and-price-levels).
 
 [itch]: https://www.nasdaqtrader.com/content/technicalsupport/specifications/dataproducts/NQTVITCHSpecification.pdf
+[cpp-book]: https://github.com/alchevrier/low-latency-order-book/blob/main/include/llob/order_book.hpp
