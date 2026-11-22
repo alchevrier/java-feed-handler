@@ -7,7 +7,12 @@ import java.util.HashMap;
 import java.util.NavigableMap;
 import java.util.TreeMap;
 
-/** Orders indexed by reference and aggregated into a sorted map per side. */
+/**
+ * Correctness baseline using standard collections. A hash map finds the order
+ * named by an execution or delete; a tree per side keeps aggregate levels in
+ * best-first order. This keeps mutations simple at the cost of allocating
+ * orders and collection entries as the book grows.
+ */
 public final class ReferenceOrderBook extends AbstractOrderBook {
     private final HashMap<Long, Order> orders = new HashMap<>();
     private final NavigableMap<Long, Long> bids = new TreeMap<>(Comparator.reverseOrder());

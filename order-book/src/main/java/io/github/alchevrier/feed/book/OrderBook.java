@@ -3,8 +3,13 @@ package io.github.alchevrier.feed.book;
 import io.github.alchevrier.feed.core.MarketMessage;
 
 /**
- * A single-instrument book for decoded order events. Access the mutable book
- * only from its owner thread; publish immutable snapshots to other threads.
+ * Reconstructs the displayed book for a single instrument from already
+ * sequenced events. The exchange decides which order fills; the book applies
+ * that update by reference rather than matching orders or tracking FIFO priority.
+ *
+ * <p>One thread owns the mutable state so individual orders and their price
+ * totals can be updated together. Other threads see only immutable snapshots
+ * published by the caller.
  */
 public interface OrderBook {
     /**
@@ -22,5 +27,6 @@ public interface OrderBook {
     /** An absent side is represented by null. */
     record TopOfBook(PriceLevel bid, PriceLevel ask) {}
 
+    /** Aggregate remaining shares at one price on one side. */
     record PriceLevel(long priceUnits, long shares) {}
 }

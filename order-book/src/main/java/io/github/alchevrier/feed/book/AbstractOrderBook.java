@@ -3,6 +3,11 @@ package io.github.alchevrier.feed.book;
 import io.github.alchevrier.feed.core.MarketMessage;
 import io.github.alchevrier.feed.core.MarketMessage.Side;
 
+/**
+ * Centralizes event dispatch and validation so storage layouts agree on
+ * input semantics, even when a reusable event slot bypasses the heap factory.
+ * Concrete books own lookup, capacity checks, and mutation of their storage.
+ */
 abstract class AbstractOrderBook implements OrderBook {
     protected static final long ALL_SHARES = 0;
 

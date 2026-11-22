@@ -2,7 +2,15 @@ package io.github.alchevrier.feed.book;
 
 import io.github.alchevrier.feed.core.MarketMessage.Side;
 
-/** Preallocated order slots and packed, best-first price levels on each side. */
+/**
+ * Preallocates order slots and best-first price levels so successful updates
+ * need no per-event allocation. Orders live in stable slots until removed;
+ * they store the price, not a level index that can change when arrays shift.
+ *
+ * <p>This avoids a fixed tick grid at the cost of moving a suffix when a price
+ * level appears or disappears. Capacity is fixed; exhaustion rejects the add
+ * without evicting an order. Snapshots still allocate.
+ */
 public final class PackedOrderBook extends AbstractOrderBook {
     private static final int MAX_ORDER_CAPACITY = 1 << 29;
 
@@ -84,6 +92,11 @@ public final class PackedOrderBook extends AbstractOrderBook {
         return slot < 0 ? 0 : orderShares[slot];
     }
 
+    /**
+     * One side's occupied prices and quantities in parallel arrays. Binary
+     * search finds the price or its insertion point in the live prefix;
+     * changing quantity alone never shifts entries.
+     */
     private static final class Levels {
         private final long[] prices;
         private final long[] quantities;
@@ -141,6 +154,13 @@ public final class PackedOrderBook extends AbstractOrderBook {
         }
     }
 
+    /**
+     * Maps an exchange reference to a stable order slot using linear probing
+     * in a primitive array. The hash chooses where to start; the full reference
+     * distinguishes colliding keys. Lookup stops at the first empty bucket,
+     * so deletion moves entries whose probe path crosses the new hole. Only
+     * bucket entries move, never the orders they point to.
+     */
     private static final class OrderIndex {
         private final long[] references;
         // A bucket holds slot + 1 so zero is empty and every long is a valid reference.

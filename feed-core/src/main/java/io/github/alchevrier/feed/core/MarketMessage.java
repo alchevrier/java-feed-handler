@@ -3,14 +3,20 @@ package io.github.alchevrier.feed.core;
 import java.util.Objects;
 
 /**
- * A decoded event for a single-instrument order book. Implementations may
- * expose reusable storage, so consumers must not retain the message after use.
+ * A decoded order event, independent of transport framing and feed sequence.
+ * The caller routes it to the right instrument and delivers it in order.
+ *
+ * <p>The sealed root fixes the event kinds, while each kind permits both
+ * heap records and reusable slots. Read-only access does not imply immutable
+ * storage: consumers must copy any values they need beyond the handoff.
  */
 public sealed interface MarketMessage
         permits MarketMessage.Add, MarketMessage.Execute, MarketMessage.Delete {
 
+    /** Opaque 64-bit exchange identifier; zero and negative bit patterns are valid. */
     long orderReference();
 
+    /** Creates a resting order with a positive share count, side, and display price. */
     non-sealed interface Add extends MarketMessage {
         Side side();
 
@@ -20,11 +26,13 @@ public sealed interface MarketMessage
         long priceUnits();
     }
 
+    /** Reduces an existing order by reference; no price or match number is needed. */
     non-sealed interface Execute extends MarketMessage {
         /** Shares executed by this event, not the quantity remaining. */
         long executedShares();
     }
 
+    /** Removes all remaining shares of an existing order by reference. */
     non-sealed interface Delete extends MarketMessage {}
 
     enum Side {

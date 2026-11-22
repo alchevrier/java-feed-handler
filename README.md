@@ -1,9 +1,10 @@
 # java-feed-handler
 
 A modular JVM feed handler for Nasdaq TotalView-ITCH over MoldUDP64. The
-decoded `MarketMessage` contract and two interchangeable single-instrument
-order books are implemented. UDP ingress, ITCH decoding, application wiring,
-and benchmarks are not implemented yet.
+decoded `MarketMessage` contract, two interchangeable single-instrument
+order books, and an in-memory MoldUDP64 A/B arbiter are implemented. Live
+UDP ingress, ITCH decoding, application wiring, and benchmarks are not
+implemented yet.
 
 ## Build
 
@@ -14,6 +15,7 @@ Gradle Wrapper for the Gradle distribution and JDK 26 for the Gradle JVM.
 ```sh
 ./gradlew build
 ./gradlew :order-book:test
+./gradlew :nasdaq-feed:test
 ```
 
 | Module | Responsibility |
@@ -29,5 +31,14 @@ reference uses `HashMap` and `TreeMap`; the packed version uses preallocated
 order slots and sorted primitive arrays per side, with the best price at index
 zero. See [ADR-001](docs/adr/ADR-001-reference-order-book.md) for the contract
 and layout tradeoffs.
+
+The arbiter accepts datagram bytes from either leg and emits one ordered
+stream of raw ITCH messages. Its tests use synthetic datagrams and a
+controllable clock; no sockets or capture files are required. Packet
+descriptors and reorder storage can be heap-backed or pooled. A synchronous
+sink reads in-order payloads directly from the caller's buffer; only delayed
+payloads are copied into reorder storage. The collecting API still returns
+independently owned copies. See
+[ADR-002](docs/adr/ADR-002-portable-udp-feed.md#accepted-first-slice-in-memory-arbitration).
 
 See [ADR-004](docs/adr/ADR-004-build-toolchain-monorepo.md) for the toolchain and module boundaries.

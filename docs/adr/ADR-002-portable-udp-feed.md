@@ -1,6 +1,7 @@
 # ADR-002: Use portable UDP ingress and merge A/B before the book
 
-**Status: Proposed**
+**Status: Accepted for in-memory framing and A/B arbitration.** Live ingress,
+threaded handoffs, ITCH mapping, and book publication remain Proposed.
 
 **Depends on:** [ADR-001](ADR-001-reference-order-book.md)
 
@@ -9,7 +10,7 @@
 The first network milestone should run on macOS and Linux and demonstrate
 that duplicate or missing input cannot silently produce a misleading book.
 
-## Proposed decision
+## Proposed live pipeline
 
 Use Java `DatagramChannel` with one platform thread and one bounded ingress
 queue per leg. A single arbiter polls A and B round-robin in bounded batches,
@@ -25,6 +26,68 @@ arbitrary mid-session capture as if that book were current. Validate framing
 and session before admitting messages; discard and count invalid datagrams.
 Admit the first valid copy observed for the next expected sequence, ignore
 duplicates, and drain buffered messages in sequence as gaps close.
+
+### Accepted first slice: in-memory arbitration
+
+One owner supplies the arbiter with datagram bytes, the leg, and a monotonic
+time. One arbiter instance handles one logical channel and one configured
+session. It emits sequence-tagged raw messages, not decoded events. Validate
+the entire datagram before admitting any of its messages. Messages held for
+reordering own their payload bytes so callers can reuse datagram storage.
+
+Bound the reorder buffer by the number of distinct pending messages.
+Duplicates do not use additional capacity. Start the gap timer on the first
+evidence of missing data and keep it running until the stream catches up to
+the highest advertised next sequence. Timeout checks also run when no
+datagrams arrive. Stale status is terminal and reports the missing sequence
+and the last sequence emitted, if any. The arbiter does not know what the
+downstream book has applied.
+
+### Accepted refinement: allocate packet descriptors through an interface
+
+Have the arbiter acquire a writable MoldUDP64 packet descriptor through a
+typed `tryAcquire` / `release` interface. Choose a heap allocator or a
+bounded pool at construction. The parser fills the supplied descriptor
+instead of creating a packet, session array, and array of message views
+per datagram. The descriptor borrows the caller's bytes; validate all
+blocks before admitting any, then traverse the validated payload by offset.
+
+Release the descriptor before `accept` returns, including on rejection.
+Report pool exhaustion without falling back to heap allocation or advancing
+the sequence. Pending and emitted messages retain separately owned bytes,
+so they cannot pin a descriptor or observe later writes to a recycled
+datagram. Pooling ingress byte buffers or admitted messages is separate
+work; this does not make the arbiter allocation-free.
+
+Direct construction keeps the parser simpler but fixes the allocation
+policy. A single private scratch descriptor would reuse storage with less
+code, but it would not let callers switch between heap and pooled modes
+under the same contract.
+
+### Accepted refinement: borrow in-order payloads and pool reordered payloads
+
+Emit raw messages to a synchronous sink using the sequence, leg, source
+buffer, offset, and length. The sink borrows the bytes only for the
+duration of the call and must not modify them or retain them. In-order
+messages use the input datagram directly, without copying a payload or
+creating a per-message buffer view. Keep the list-returning API as a
+collecting adapter for callers that need independently owned messages.
+Delivery is not reentrant. If the sink throws, mark the stream stale and
+propagate the failure; retry could deliver an event the sink already acted on.
+
+Copy only out-of-order messages into owned storage. Keep a heap-backed
+reference option and a preallocated option behind the same contract. In
+pooled mode, reuse payload slots and their sequence index; don't allocate
+boxed keys or map entries per buffered message. Release a slot after
+delivery or when the run becomes stale. Exhaustion uses the existing
+terminal stale policy; pooled slots can hold any valid MoldUDP64 message.
+
+Retaining whole datagrams instead would avoid the reorder copy, but
+would require ownership and release to span the upstream receiver and
+the arbiter. One delayed message could hold an entire datagram slot.
+Copying only reordered payloads keeps the caller free to reuse its input
+buffer as soon as `accept` returns, at the cost of a bounded copy and
+preallocated storage for those messages.
 
 ## Portability boundary
 
@@ -152,11 +215,14 @@ are deferred.
 
 ## Acceptance criteria
 
-Use synthetic datagrams to test duplicates, a gap filled by either leg,
-timeout and buffer exhaustion, queue overflow, malformed framing, and
-unsupported mutations. Provide a documented loopback demo that sends
-synthetic MoldUDP64 datagrams to both sockets and publishes the expected
-snapshots. No PCAP or native dependency is required to run it.
+For the in-memory slice, use synthetic datagrams to test duplicate and
+overlapping messages, gap repair by either leg, timeout and buffer
+exhaustion, control packets, and malformed framing.
+
+For the proposed live pipeline, also test queue overflow and unsupported
+mutations. Provide a documented loopback demo that sends synthetic
+MoldUDP64 datagrams to both sockets and publishes the expected snapshots.
+No PCAP or native dependency is required to run it.
 
 Sources: [Workflow draft](../draft/market-data-workflow.md#portable-udp-thread-topology)
 and [replay inputs](../draft/ingress-comparison.md#replay-and-correctness-inputs).
