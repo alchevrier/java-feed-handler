@@ -18,13 +18,13 @@ Gradle Wrapper for the Gradle distribution and JDK 26 for the Gradle JVM.
 ./gradlew :nasdaq-feed:test
 ```
 
-| Module | Responsibility |
+| Module | Current scope |
 |---|---|
-| `:feed-core` | Protocol-independent event, snapshot, and handoff contracts |
-| `:order-book` | Single-writer book implementations |
-| `:nasdaq-feed` | UDP ingress, MoldUDP64 arbitration, and ITCH mapping |
-| `:app` | Application wiring and loopback demo |
-| `:benchmarks` | JMH benchmarks, run separately with `./gradlew :benchmarks:jmh` once added |
+| [`:feed-core`](feed-core/README.md) | Protocol-independent order-event contract |
+| [`:order-book`](order-book/README.md) | Reference and packed single-writer books |
+| [`:nasdaq-feed`](nasdaq-feed/README.md) | In-memory MoldUDP64 framing and A/B arbitration |
+| [`:app`](app/README.md) | Scaffold for application wiring and the loopback demo |
+| [`:benchmarks`](benchmarks/README.md) | JMH scaffold; workloads not yet implemented |
 
 Both books apply add, execute, and delete events through `OrderBook`. The
 reference uses `HashMap` and `TreeMap`; the packed version uses preallocated
