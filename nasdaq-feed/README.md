@@ -1,9 +1,9 @@
 # `:nasdaq-feed`
 
-Validates MoldUDP64 datagrams and merges two redundant legs into one ordered
-stream of **raw ITCH payloads**. The current implementation takes datagram
-buffers in memory. Live UDP ingress, threaded handoffs, and ITCH decoding are
-not implemented yet.
+Validates MoldUDP64 datagrams, merges two redundant legs, and maps ordered
+ITCH add, execute, and delete payloads into `MarketMessage` events for one
+configured stock locate. Live UDP ingress and threaded handoffs are not
+implemented yet.
 
 ```mermaid
 flowchart LR
@@ -13,6 +13,8 @@ flowchart LR
     Arbiter -->|Expected sequence| Sink["Synchronous raw-message sink"]
     Arbiter -->|Ahead of a gap| Pending["Bounded reorder storage"]
     Pending -->|Gap closes| Sink
+    Sink --> Mapper["ITCH mapper"]
+    Mapper --> Target["Event target: heap or reusable slot"]
     Arbiter -->|Unrecoverable gap or sink failure| Stale["Terminal stale status"]
 ```
 
@@ -28,6 +30,13 @@ Out-of-order payloads are copied into heap-backed or preallocated reorder
 storage, so the caller can reuse the datagram after the call returns. Packet
 descriptor allocation is independently selectable. `acceptAndCopy` allocates
 a list of owned copies for callers that need to retain messages.
+
+The mapper reads the borrowed byte range in network byte order without
+retaining it. Recognized non-book messages and order updates for other stock
+locates consume sequence numbers without changing the tracked book. Malformed
+payloads, unknown types, and unsupported mutations of the tracked book fail
+the sink and mark the stream stale. Reusable events are valid only during
+their consumer callback.
 
 Run `./gradlew :nasdaq-feed:test` from the repository root. Tests use synthetic
 datagrams and caller-supplied time, with no sockets or capture files. See

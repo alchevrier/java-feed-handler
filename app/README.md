@@ -1,8 +1,9 @@
 # `:app`
 
-**Status: scaffold only.** This module will select and wire the feed, book, and
-snapshot publisher at startup. There is no application entry point or runnable
-loopback demo yet.
+**Status: in-memory integration tests only.** The tests connect the arbiter
+and ITCH mapper to both order books using synthetic datagrams. Run them with
+`./gradlew :app:test` from the repository root. There is no application entry
+point or runnable loopback demo yet.
 
 ## Planned loopback flow
 
@@ -21,7 +22,7 @@ flowchart LR
 ```
 
 The planned demo will exercise the portable UDP-to-snapshot path with synthetic
-datagrams. The app will compose the in-memory arbiter from
+datagrams. The app will compose the arbiter and ITCH mapper from
 [`nasdaq-feed`](../nasdaq-feed/README.md), the event contract from
 [`feed-core`](../feed-core/README.md), and either
 [`order-book`](../order-book/README.md) implementation. The arbiter and mapper

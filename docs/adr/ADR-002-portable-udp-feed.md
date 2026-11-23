@@ -1,7 +1,7 @@
 # ADR-002: Use portable UDP ingress and merge A/B before the book
 
-**Status: Accepted for in-memory framing and A/B arbitration.** Live ingress,
-threaded handoffs, ITCH mapping, and book publication remain Proposed.
+**Status: Accepted for in-memory framing, A/B arbitration, and ITCH mapping.**
+Live ingress, threaded handoffs, and book publication remain Proposed.
 
 **Depends on:** [ADR-001](ADR-001-reference-order-book.md)
 
@@ -88,6 +88,38 @@ the arbiter. One delayed message could hold an entire datagram slot.
 Copying only reordered payloads keeps the caller free to reuse its input
 buffer as soon as `acceptAndForward` returns, at the cost of a bounded copy and
 preallocated storage for those messages.
+
+### Accepted slice: decode ITCH into caller-owned events
+
+Decode one borrowed `ByteBuffer` range synchronously inside
+`acceptAndForward`. Use absolute, big-endian reads without changing the
+buffer's position or retaining it. For the configured stock locate, map
+`A`, `E`, and `D` to the corresponding `MarketMessage` views documented in
+[ADR-001](ADR-001-reference-order-book.md#wire-reference). Keep the MoldUDP64
+sequence outside the decoded event.
+
+The mapper passes validated primitive values to a caller-provided target
+with separate add, execute, and delete methods. The target chooses whether
+to create a heap event or fill and consume a reusable typed slot. Returning
+a fresh `MarketMessage` from the mapper would be simpler for heap callers
+but would put allocation policy inside the decoder. A reusable target must
+not overwrite a slot while a consumer still owns it.
+
+Validate the payload range and known type's wire length before routing.
+For orders mapped into the book, validate the decoded side and share count.
+The mapper does not validate unused fields or maintain a stock directory.
+Do not emit book events for recognized non-book messages or for known
+order messages for other stock locates. Malformed payloads, unknown types,
+and unsupported mutations (`F`, `C`, `X`, `U`) for the tracked stock
+locate fail explicitly. Propagate that failure out of the arbiter's sink
+so the stream becomes stale instead of silently advancing past a possibly
+missed mutation.
+
+Verify the mapper with synthetic wire fixtures and an in-memory trace from
+both feed legs through the arbiter and mapper into both books, including
+duplicate suppression and a failure that prevents later events from being
+applied. Live UDP, threaded handoffs, and snapshot publication remain out
+of scope for this slice.
 
 ## Portability boundary
 
@@ -217,10 +249,12 @@ are deferred.
 
 For the in-memory slice, use synthetic datagrams to test duplicate and
 overlapping messages, gap repair by either leg, timeout and buffer
-exhaustion, control packets, and malformed framing.
+exhaustion, control packets, and malformed framing. Feed the admitted
+payloads through the mapper into each book and verify that an unsupported
+mutation or malformed ITCH payload stops the run before the next event.
 
-For the proposed live pipeline, also test queue overflow and unsupported
-mutations. Provide a documented loopback demo that sends synthetic
+For the proposed live pipeline, also test queue overflow. Provide a
+documented loopback demo that sends synthetic
 MoldUDP64 datagrams to both sockets and publishes the expected snapshots.
 No PCAP or native dependency is required to run it.
 

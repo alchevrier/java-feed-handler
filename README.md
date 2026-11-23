@@ -2,9 +2,9 @@
 
 A modular JVM feed handler for Nasdaq TotalView-ITCH over MoldUDP64. The
 decoded `MarketMessage` contract, two interchangeable single-instrument
-order books, and an in-memory MoldUDP64 A/B arbiter are implemented. Live
-UDP ingress, ITCH decoding, application wiring, and benchmarks are not
-implemented yet.
+order books, an in-memory MoldUDP64 A/B arbiter, and an ITCH add/execute/delete
+mapper are implemented. Live UDP ingress, application wiring, and benchmarks
+are not implemented yet.
 
 ## Build
 
@@ -22,8 +22,8 @@ Gradle Wrapper for the Gradle distribution and JDK 26 for the Gradle JVM.
 |---|---|
 | [`:feed-core`](feed-core/README.md) | Protocol-independent order-event contract |
 | [`:order-book`](order-book/README.md) | Reference and packed single-writer books |
-| [`:nasdaq-feed`](nasdaq-feed/README.md) | In-memory MoldUDP64 framing and A/B arbitration |
-| [`:app`](app/README.md) | Scaffold for application wiring and the loopback demo |
+| [`:nasdaq-feed`](nasdaq-feed/README.md) | In-memory MoldUDP64 framing, A/B arbitration, and ITCH mapping |
+| [`:app`](app/README.md) | In-memory integration tests; scaffold for application wiring and the loopback demo |
 | [`:benchmarks`](benchmarks/README.md) | JMH scaffold; workloads not yet implemented |
 
 Both books apply add, execute, and delete events through `OrderBook`. The
@@ -37,9 +37,10 @@ stream of raw ITCH messages. Its tests use synthetic datagrams and a
 controllable clock; no sockets or capture files are required. Packet
 descriptors and reorder storage can be heap-backed or pooled. With
 `acceptAndForward`, a synchronous sink reads in-order payloads directly
-from the caller's buffer; only delayed
-payloads are copied into reorder storage. Call `acceptAndCopy` explicitly
-when you need independently owned copies. See
+from the caller's buffer; only delayed payloads are copied into reorder
+storage. The ITCH mapper reads these ranges directly and sends decoded
+fields to a heap-backed or reusable event target. Call `acceptAndCopy`
+explicitly when you need independently owned copies of raw payloads. See
 [ADR-002](docs/adr/ADR-002-portable-udp-feed.md#accepted-first-slice-in-memory-arbitration).
 
 See [ADR-004](docs/adr/ADR-004-build-toolchain-monorepo.md) for the toolchain and module boundaries.
