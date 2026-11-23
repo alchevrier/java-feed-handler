@@ -1,7 +1,7 @@
 # ADR-002: Use portable UDP ingress and merge A/B before the book
 
-**Status: Accepted through dual-leg loopback UDP ingress and the book handoff.**
-Production ingress configuration and snapshot publication remain Proposed.
+**Status: Accepted through dual-leg loopback UDP ingress, the book handoff, and snapshot publication.**
+Production ingress configuration remains Proposed.
 
 **Depends on:** [ADR-001](ADR-001-reference-order-book.md)
 
@@ -166,6 +166,62 @@ terminal timeout when a gap cannot be repaired. Keep multicast, exchange
 connectivity, production configuration, and a public snapshot publisher
 out of scope.
 
+### Accepted slice: publish a strategy-facing top-of-book snapshot
+
+A strategy needs the quote and its validity in one read. It must not read
+the mutable book, retain a borrowed ITCH event, or infer book progress from
+the arbiter's last emitted sequence.
+
+Strategy code runs on its own threads, intended to execute on CPU cores
+separate from the feed-handler threads. The book writer publishes a value;
+it never invokes strategy code inline or waits for a strategy to read it.
+Correctness must not depend on where the OS schedules the threads. CPU
+affinity and core isolation are deployment concerns, not part of this slice.
+
+Expose an immutable, latest-value snapshot for one run and instrument.
+Include the best bid and ask, the last applied message sequence reflected
+in the snapshot, and a status:
+
+| Status | Meaning |
+|---|---|
+| `NOT_READY` | No book update has been published for this run. There is no last applied sequence. |
+| `LIVE` | The snapshot reflects a successfully applied book update and no terminal failure has been published. |
+| `STALE` | A terminal failure has been published. Keep the last published quote and applied sequence for diagnostics, with the failure reason and its sequence. The quote is not current. |
+
+The book thread publishes after a successful `OrderBook.apply`, even when
+the best quote did not change, so the sequence reflects applied progress.
+Recognized messages skipped by the mapper do not advance that sequence.
+The field is absent until the first publication; zero is a valid sequence.
+
+Start with one `AtomicReference` to the immutable snapshot. Its memory
+ordering safely publishes the initialized value to readers on other cores.
+Readers take one reference read and may retain the captured value, but must
+read again to observe later health changes. Publish terminal handoff
+failures outside the book-event ring so a full ring or a stalled book
+callback cannot hide staleness. Compare-and-set both kinds of updates:
+once `STALE` is published, an in-flight book update cannot replace it with
+`LIVE`. If staleness wins
+the race, its snapshot describes the last update actually published, not
+an update that was merely queued or completed internally afterward. A new
+run requires a new publisher and book.
+
+A latest-value reference lets slow strategy readers skip intermediate
+quotes without blocking the writer. A FIFO would preserve each transition,
+but it adds a capacity and overload policy this use case does not need.
+The book writer reuses one caller-owned top-of-book buffer. The packed book
+fills it directly from its arrays. The buffer never crosses threads: the
+publisher reuses unchanged immutable quote values and creates a new
+immutable snapshot to publish progress. An allocation-free strategy read
+contract and a lossless strategy event stream are separate work.
+
+Verify that an independent reader thread sees a coherent quote, sequence,
+and status while the book writer makes progress without waiting for it.
+Also verify that an unchanged quote can advance the applied sequence, a
+gap timeout or book-ring overflow publishes stale even without a new quote,
+and a paused book callback cannot publish live after stale. Exercise the
+publisher from the loopback demo without adding strategy logic, recovery,
+or exchange connectivity.
+
 ## Portability boundary
 
 ```mermaid
@@ -180,11 +236,14 @@ flowchart TD
         merge["Round-robin A/B arbitration"] --> mapper["ItchMapper"]
     end
     subgraph writer["Book writer thread"]
-        book["OrderBook"] --> snapshot["SnapshotSink"]
+        book["OrderBook"]
     end
     a --> qa["Queue A<br/>Bounded datagram handoff"] --> merge
     b --> qb["Queue B<br/>Bounded datagram handoff"] --> merge
     mapper --> events["Queue<br/>Bounded book-event handoff"] --> book
+    book -->|Applied quote| snapshot["Latest snapshot"]
+    merge -->|Terminal failure| snapshot
+    snapshot -.->|Latest immutable view| strategy["Strategy reader on a separate thread"]
 ```
 
 The boxes show thread ownership; each queue sits between the producer and
@@ -206,7 +265,7 @@ pipeline must preserve those contracts.
 | `Queue` | Transfers datagrams or mapped book events in FIFO order across a thread boundary. The handoff reports when full and defines when storage can be reused. A bounded `LinkedBlockingQueue` adapter and a preallocated SPSC ring can implement the same contract without exposing `java.util.Queue` to callers. |
 | `ItchMapper` | Decodes admitted ITCH bytes into caller-provided event storage without changing the admission order or depending on how the bytes arrived or how the event storage was allocated. |
 | `OrderBook` | Applies decoded events on the book thread and provides top-of-book state. The `HashMap` + `TreeMap` reference and later array-based books must obey the same observable contract. |
-| `SnapshotSink` | Receives published snapshots and status changes without reading mutable book state. A test collector and a strategy-facing publisher can use the same interface. |
+| `TopOfBookPublisher` | Publishes the latest applied quote and feed status as one immutable view. Strategy readers need neither access to the mutable book nor a queue. |
 
 ### Allocation and ownership
 

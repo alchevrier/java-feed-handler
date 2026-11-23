@@ -24,6 +24,9 @@ changing the book.
 
 A single thread owns the book. `apply` reports whether the best price or
 aggregate size changed; the caller decides when to publish a snapshot.
+`topOfBook()` is the convenience immutable read and can allocate.
+`readTopOfBook(buffer)` lets the writer reuse one scratch buffer; the
+packed implementation fills it directly from the best levels.
 
 Run `./gradlew :order-book:test` from the repository root to exercise the shared
 Spock contract and packed-book capacity and slot reuse. See

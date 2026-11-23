@@ -5,6 +5,7 @@ import spock.lang.Specification
 
 import static io.github.alchevrier.feed.book.OrderBook.PriceLevel
 import static io.github.alchevrier.feed.book.OrderBook.TopOfBook
+import static io.github.alchevrier.feed.book.OrderBook.TopOfBookBuffer
 import static io.github.alchevrier.feed.core.MarketMessage.*
 import static io.github.alchevrier.feed.core.MarketMessage.Side.*
 
@@ -12,6 +13,8 @@ class OrderBookSpec extends Specification {
     def "#layout: #scenario"() {
         given:
         OrderBook book = newBook(layout)
+        def buffer = new TopOfBookBuffer()
+        def previous = top(null, null)
 
         expect:
         book.topOfBook() == top(null, null)
@@ -19,6 +22,11 @@ class OrderBookSpec extends Specification {
             assert book.apply(step.message) == step.changed
             assert book.remainingShares(step.message.orderReference()) == step.remaining
             assert book.topOfBook() == step.snapshot
+            book.readTopOfBook(buffer)
+            def captured = buffer.snapshot(previous)
+            assert captured == step.snapshot
+            assert captured.is(previous) == !step.changed
+            return (previous = captured)
         }
 
         where:
@@ -43,6 +51,12 @@ class OrderBookSpec extends Specification {
                 step(add(Long.MIN_VALUE, SELL, 20L, 101L), true, 20, top(null, level(101, 20))),
                 step(add(0L, BUY, 30L, 0L), true, 30, top(level(0, 30), level(101, 20))),
                 step(delete(Long.MIN_VALUE), true, 0, top(level(0, 30), level(102, 10)))
+            ]],
+            ["clear both sides on a reused quote buffer", [
+                step(add(1L, BUY, 5L, 0L), true, 5, top(level(0, 5), null)),
+                step(add(2L, SELL, 8L, 101L), true, 8, top(level(0, 5), level(101, 8))),
+                step(delete(1L), true, 0, top(null, level(101, 8))),
+                step(delete(2L), true, 0, top(null, null))
             ]],
             ["preserve resting orders when inserting and removing interior price levels", [
                 step(add(1L, BUY, 10L, 100L), true, 10, top(level(100, 10), null)),

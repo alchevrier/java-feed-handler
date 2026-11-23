@@ -1,6 +1,6 @@
 package io.github.alchevrier.feed.app;
 
-import io.github.alchevrier.feed.book.OrderBook;
+import io.github.alchevrier.feed.app.TopOfBookPublisher.Snapshot;
 import io.github.alchevrier.feed.book.PackedOrderBook;
 import io.github.alchevrier.feed.nasdaq.ItchBookHandoff;
 import io.github.alchevrier.feed.nasdaq.ItchMapper;
@@ -12,8 +12,6 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
 import java.time.Duration;
-import java.util.List;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeoutException;
@@ -21,6 +19,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BooleanSupplier;
 
+import static io.github.alchevrier.feed.app.TopOfBookPublisher.Status.LIVE;
+import static io.github.alchevrier.feed.app.TopOfBookPublisher.Status.STALE;
 import static io.github.alchevrier.feed.nasdaq.MoldUdp64Arbiter.Leg.A;
 import static io.github.alchevrier.feed.nasdaq.MoldUdp64Arbiter.Leg.B;
 import static java.nio.charset.StandardCharsets.US_ASCII;
@@ -45,60 +45,61 @@ public final class LoopbackDemo {
         var arbiter = new MoldUdp64Arbiter(SESSION, FIRST_SEQUENCE, 4, gapTimeout,
                 MoldUdp64PacketAllocator.pooled(1), MoldUdp64Arbiter.ReorderStorage.POOLED);
         var handoff = new ItchBookHandoff(arbiter, new ItchMapper(LOCATE), 4);
+        var publisher = new TopOfBookPublisher();
+        var pipeline = new SnapshotBookPipeline(handoff, new PackedOrderBook(4, 4), publisher);
         var running = new AtomicBoolean(true);
         var sawLaterDatagram = new AtomicBoolean();
-        var updates = new ArrayBlockingQueue<Update>(3);
         try (var ingress = new LoopbackUdpIngress(4);
              var sender = DatagramChannel.open();
              var workers = Executors.newFixedThreadPool(2, Thread.ofPlatform().name("loopback-worker-", 0).factory())) {
             Future<?> admission = workers.submit(() -> {
                 LoopbackUdpIngress.DatagramSink sink = (leg, datagram) -> {
-                    handoff.accept(leg, datagram, System.nanoTime());
+                    pipeline.accept(leg, datagram, System.nanoTime());
                     if (leg == B) {
                         sawLaterDatagram.set(true);
                     }
                 };
-                while (running.get() && !Thread.currentThread().isInterrupted() && handoff.stale().isEmpty()) {
+                while (running.get() && !Thread.currentThread().isInterrupted() && publisher.latest().status() != STALE) {
                     if (!ingress.poll(sink)) {
-                        handoff.checkTimeout(System.nanoTime());
+                        pipeline.checkTimeout(System.nanoTime());
                         LockSupport.parkNanos(IDLE_PARK_NANOS);
                     }
                 }
                 return null;
             });
             Future<?> writing = workers.submit(() -> {
-                OrderBook book = new PackedOrderBook(4, 4);
-                ItchBookHandoff.BookEventConsumer apply = (sequence, event) -> {
-                    book.apply(event);
-                    updates.add(new Update(sequence, book.topOfBook().bid()));
-                };
-                while (running.get() && !Thread.currentThread().isInterrupted() && handoff.stale().isEmpty()) {
-                    if (!handoff.tryConsume(apply)) {
+                while (running.get() && !Thread.currentThread().isInterrupted() && publisher.latest().status() != STALE) {
+                    if (!pipeline.tryApplyNext()) {
                         LockSupport.parkNanos(IDLE_PARK_NANOS);
                     }
                 }
             });
+            Snapshot initial;
             try {
                 send(sender, ingress.address(A), FIRST_SEQUENCE, add());
-                await(() -> updates.size() == 1, "initial add", admission, writing);
+                await(() -> publisher.latest().status() == LIVE, "initial add", admission, writing);
+                initial = publisher.latest();
 
                 send(sender, ingress.address(B), FIRST_SEQUENCE + 2, orderMessage('D', 19));
                 await(sawLaterDatagram::get, "out-of-order delete", admission, writing);
                 if (repair) {
                     send(sender, ingress.address(A), FIRST_SEQUENCE + 1, orderMessage('E', 31).putInt(19, 40));
-                    await(() -> updates.size() == 3 || handoff.stale().isPresent(), "gap repair", admission, writing);
-                    if (handoff.stale().isPresent()) {
-                        throw new IllegalStateException("Repair failed: " + handoff.stale().orElseThrow());
+                    await(() -> {
+                        Snapshot latest = publisher.latest();
+                        return latest.status() == STALE || latest.lastAppliedSequence().orElseThrow() == FIRST_SEQUENCE + 2;
+                    }, "gap repair", admission, writing);
+                    if (publisher.latest().status() == STALE) {
+                        throw new IllegalStateException("Repair failed: " + publisher.latest().failure().orElseThrow());
                     }
                 } else {
-                    await(() -> handoff.stale().isPresent(), "gap timeout", admission, writing);
+                    await(() -> publisher.latest().status() == STALE, "gap timeout", admission, writing);
                 }
             } finally {
                 running.set(false);
             }
             admission.get(5, SECONDS);
             writing.get(5, SECONDS);
-            return new Result(List.copyOf(updates), handoff.stale().orElse(null));
+            return new Result(initial, publisher.latest());
         }
     }
 
@@ -143,15 +144,16 @@ public final class LoopbackDemo {
 
     private static void print(String label, Result result) {
         System.out.println(label + ":");
-        for (Update update : result.updates()) {
-            System.out.printf("  applied %d: bid=%s%n", update.sequence(), update.bid());
-        }
-        if (result.stale() != null) {
-            System.out.printf("  STALE %s at sequence %d%n", result.stale().reason(), result.stale().sequence());
-        }
+        print("initial", result.initial());
+        print("latest", result.latest());
     }
 
-    record Update(long sequence, OrderBook.PriceLevel bid) {}
+    private static void print(String label, Snapshot snapshot) {
+        System.out.printf("  %s %s: last applied=%d bid=%s ask=%s%n", label, snapshot.status(),
+                snapshot.lastAppliedSequence().orElseThrow(), snapshot.quote().bid(), snapshot.quote().ask());
+        snapshot.failure().ifPresent(failure ->
+                System.out.printf("  STALE %s at sequence %d%n", failure.reason(), failure.sequence()));
+    }
 
-    record Result(List<Update> updates, ItchBookHandoff.Stale stale) {}
+    record Result(Snapshot initial, Snapshot latest) {}
 }

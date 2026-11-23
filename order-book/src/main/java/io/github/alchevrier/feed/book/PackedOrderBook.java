@@ -9,7 +9,8 @@ import io.github.alchevrier.feed.core.MarketMessage.Side;
  *
  * <p>This avoids a fixed tick grid at the cost of moving a suffix when a price
  * level appears or disappears. Capacity is fixed; exhaustion rejects the add
- * without evicting an order. Snapshots still allocate.
+ * without evicting an order. Reading into caller-owned quote storage also
+ * avoids allocation; {@link #topOfBook()} remains an immutable convenience read.
  */
 public final class PackedOrderBook extends AbstractOrderBook {
     private static final int MAX_ORDER_CAPACITY = 1 << 29;
@@ -84,6 +85,12 @@ public final class PackedOrderBook extends AbstractOrderBook {
     @Override
     public TopOfBook topOfBook() {
         return new TopOfBook(bids.best(), asks.best());
+    }
+
+    @Override
+    public void readTopOfBook(TopOfBookBuffer target) {
+        target.setBid(bids.prices[0], bids.size == 0 ? 0 : bids.quantities[0]);
+        target.setAsk(asks.prices[0], asks.size == 0 ? 0 : asks.quantities[0]);
     }
 
     @Override

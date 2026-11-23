@@ -20,6 +20,9 @@ import java.util.concurrent.ExecutionException
 import java.util.concurrent.FutureTask
 import java.util.concurrent.Semaphore
 
+import static io.github.alchevrier.feed.app.TopOfBookPublisher.Status.LIVE
+import static io.github.alchevrier.feed.app.TopOfBookPublisher.Status.NOT_READY
+import static io.github.alchevrier.feed.app.TopOfBookPublisher.Status.STALE
 import static io.github.alchevrier.feed.nasdaq.ItchBookHandoff.StaleReason.BOOK_FAILURE
 import static io.github.alchevrier.feed.nasdaq.ItchBookHandoff.StaleReason.DECODE_FAILURE
 import static io.github.alchevrier.feed.nasdaq.ItchBookHandoff.StaleReason.GAP_TIMEOUT
@@ -393,6 +396,170 @@ class InMemoryItchPipelineSpec extends Specification {
 
         where:
         capacity << [-1, 0, 3]
+    }
+
+    def "a separate reader can retain one snapshot while the #layout book advances without a quote change"() {
+        given:
+        def publisher = new TopOfBookPublisher()
+        def handoff = new ItchBookHandoff(arbiter(), new ItchMapper(LOCATE), 2)
+        def pipeline = new SnapshotBookPipeline(handoff, book(layout), publisher)
+        def initial = publisher.latest()
+        def ask = add().putLong(11, 44L).put(19, (byte) 'S').putInt(20, 50).putInt(32, 110_000)
+        pipeline.accept(A, packet(1000, add(), ask, wire('D', 19, 8)), 0)
+        assert pipeline.tryApplyNext()
+        assert pipeline.tryApplyNext()
+        assert !pipeline.tryApplyNext()
+        def captured = new CountDownLatch(1)
+        def resume = new CountDownLatch(1)
+        def reader = new FutureTask({
+            def retained = publisher.latest()
+            captured.countDown()
+            assert resume.await(5, SECONDS)
+            [retained, publisher.latest()]
+        } as Callable)
+        Thread.ofPlatform().daemon().start(reader)
+
+        when:
+        assert captured.await(5, SECONDS)
+        def worseBid = add().putLong(11, 43L).putInt(32, 90_000)
+        pipeline.accept(B, packet(1003, worseBid), 1)
+        assert publisher.latest().lastAppliedSequence().asLong == 1001
+        assert pipeline.tryApplyNext()
+        resume.countDown()
+        def observed = reader.get(5, SECONDS)
+
+        then:
+        initial.status() == NOT_READY
+        initial.lastAppliedSequence().empty
+        initial.quote() == new OrderBook.TopOfBook(null, null)
+        observed*.status() == [LIVE, LIVE]
+        observed.collect { it.lastAppliedSequence().asLong } == [1001L, 1003L]
+        observed*.quote() == [new OrderBook.TopOfBook(
+                new OrderBook.PriceLevel(100_000, 100), new OrderBook.PriceLevel(110_000, 50))] * 2
+        observed[1].quote().is(observed[0].quote())
+        observed.every { it.failure().empty }
+
+        cleanup:
+        resume.countDown()
+        reader.cancel(true)
+
+        where:
+        layout << ['reference', 'packed']
+    }
+
+    def "a full ring publishes stale before a paused book callback can finish"() {
+        given:
+        def publisher = new TopOfBookPublisher()
+        def delegate = new ReferenceOrderBook()
+        def paused = new CountDownLatch(1)
+        def resume = new CountDownLatch(1)
+        OrderBook book = Stub(OrderBook) {
+            apply(_ as MarketMessage) >> { MarketMessage event ->
+                if (event instanceof MarketMessage.Execute) {
+                    paused.countDown()
+                    assert resume.await(5, SECONDS)
+                }
+                delegate.apply(event)
+            }
+            readTopOfBook(_ as OrderBook.TopOfBookBuffer) >> { OrderBook.TopOfBookBuffer target ->
+                delegate.readTopOfBook(target)
+            }
+        }
+        def pipeline = new SnapshotBookPipeline(new ItchBookHandoff(arbiter(), new ItchMapper(LOCATE), 1),
+                book, publisher)
+        pipeline.accept(A, packet(1000, add()), 0)
+        def firstPublished = new CountDownLatch(1)
+        def admittedExecution = new CountDownLatch(1)
+        def writer = new FutureTask({
+            assert pipeline.tryApplyNext()
+            firstPublished.countDown()
+            assert admittedExecution.await(5, SECONDS)
+            assert pipeline.tryApplyNext()
+            delegate.remainingShares(42)
+        } as Callable)
+        Thread.ofPlatform().daemon().start(writer)
+
+        when:
+        assert firstPublished.await(5, SECONDS)
+        pipeline.accept(A, packet(1001, wire('E', 31).putInt(19, 40)), 1)
+        admittedExecution.countDown()
+        assert paused.await(5, SECONDS)
+        pipeline.accept(B, packet(1002, wire('D', 19)), 2)
+        def stale = publisher.latest()
+
+        then:
+        stale.status() == STALE
+        stale.failure().orElseThrow() == new ItchBookHandoff.Stale(QUEUE_FULL, 1002)
+        stale.lastAppliedSequence().asLong == 1000
+        stale.quote().bid() == new OrderBook.PriceLevel(100_000, 100)
+
+        when:
+        resume.countDown()
+
+        then:
+        writer.get(5, SECONDS) == 60
+        publisher.latest().is(stale)
+
+        cleanup:
+        admittedExecution.countDown()
+        resume.countDown()
+        writer.cancel(true)
+    }
+
+    def "a timeout before the first publication exposes the missing sequence, not an applied one"() {
+        given:
+        def publisher = new TopOfBookPublisher()
+        def pipeline = new SnapshotBookPipeline(new ItchBookHandoff(arbiter(), new ItchMapper(LOCATE), 1),
+                new ReferenceOrderBook(), publisher)
+        pipeline.accept(B, packet(1001, add()), 0)
+
+        when:
+        pipeline.checkTimeout(10)
+
+        then:
+        def stale = publisher.latest()
+        stale.status() == STALE
+        stale.lastAppliedSequence().empty
+        stale.quote() == new OrderBook.TopOfBook(null, null)
+        stale.failure().orElseThrow() == new ItchBookHandoff.Stale(GAP_TIMEOUT, 1000)
+    }
+
+    def "book sequence zero is distinct from a run with no applied event"() {
+        given:
+        def publisher = new TopOfBookPublisher()
+        def handoff = new ItchBookHandoff(new MoldUdp64Arbiter(SESSION, 0, 1, 10), new ItchMapper(LOCATE), 1)
+        def pipeline = new SnapshotBookPipeline(handoff, new ReferenceOrderBook(), publisher)
+
+        when:
+        pipeline.accept(A, packet(0, add()), 0)
+        assert pipeline.tryApplyNext()
+
+        then:
+        publisher.latest().status() == LIVE
+        publisher.latest().lastAppliedSequence().asLong == 0L
+    }
+
+    def "a #stage exception publishes failure even though the operation throws"() {
+        given:
+        def publisher = new TopOfBookPublisher()
+        def pipeline = new SnapshotBookPipeline(new ItchBookHandoff(arbiter(), new ItchMapper(LOCATE), 1),
+                new ReferenceOrderBook(), publisher)
+
+        when:
+        pipeline.accept(A, packet(1000, invalid), 0)
+        pipeline.tryApplyNext()
+
+        then:
+        thrown(error)
+        def stale = publisher.latest()
+        stale.status() == STALE
+        stale.lastAppliedSequence().empty
+        stale.failure().orElseThrow() == new ItchBookHandoff.Stale(reason, 1000)
+
+        where:
+        stage    | invalid       | error                         | reason
+        'decode' | wire('X', 23) | UnsupportedOperationException | DECODE_FAILURE
+        'book'   | wire('D', 19) | IllegalArgumentException       | BOOK_FAILURE
     }
 
     private static MoldUdp64Arbiter arbiter(MoldUdp64PacketAllocator allocator = MoldUdp64PacketAllocator.pooled(1)) {

@@ -8,25 +8,31 @@ import spock.util.concurrent.PollingConditions
 import java.nio.ByteBuffer
 import java.nio.channels.DatagramChannel
 
+import static io.github.alchevrier.feed.app.TopOfBookPublisher.Status.LIVE
+import static io.github.alchevrier.feed.app.TopOfBookPublisher.Status.STALE
 import static io.github.alchevrier.feed.nasdaq.ItchBookHandoff.StaleReason.GAP_TIMEOUT
 import static io.github.alchevrier.feed.nasdaq.MoldUdp64Arbiter.Leg.A
 import static io.github.alchevrier.feed.nasdaq.MoldUdp64Arbiter.Leg.B
 
 class LoopbackUdpSpec extends Specification {
-    def "loopback #scenario applies only the contiguous prefix to the book"() {
+    def "loopback #scenario publishes the top of book and health together"() {
         when:
         def result = LoopbackDemo.run(repair)
 
         then:
-        result.updates()*.sequence() == sequences
-        result.updates()*.bid() == bids
-        result.stale()?.reason() == reason
-        result.stale()?.sequence() == missing
+        result.initial().status() == LIVE
+        result.initial().lastAppliedSequence().asLong == 1000L
+        result.initial().quote().bid() == new PriceLevel(100_000, 100)
+        result.latest().status() == status
+        result.latest().lastAppliedSequence().asLong == lastApplied
+        result.latest().quote().bid() == bid
+        result.latest().failure().orElse(null)?.reason() == reason
+        result.latest().failure().orElse(null)?.sequence() == missing
 
         where:
-        scenario        | repair | sequences             | bids                                                         | reason      | missing
-        'repairs a gap' | true   | [1000L, 1001L, 1002L] | [new PriceLevel(100_000, 100), new PriceLevel(100_000, 60), null] | null        | null
-        'times out'     | false  | [1000L]               | [new PriceLevel(100_000, 100)]                                | GAP_TIMEOUT | 1001L
+        scenario        | repair | status | lastApplied | bid                          | reason      | missing
+        'repairs a gap' | true   | LIVE   | 1002L       | null                         | null        | null
+        'times out'     | false  | STALE  | 1000L       | new PriceLevel(100_000, 100) | GAP_TIMEOUT | 1001L
     }
 
     def "a borrowed datagram survives a drop on its leg and the other leg remains usable"() {
