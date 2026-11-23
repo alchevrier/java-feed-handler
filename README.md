@@ -5,7 +5,8 @@ decoded `MarketMessage` contract, two interchangeable single-instrument
 order books, an in-memory MoldUDP64 A/B arbiter, an ITCH add/execute/delete
 mapper, a bounded mapper-to-book handoff, and a strategy-facing top-of-book
 snapshot are implemented. A runnable loopback demo exercises both UDP legs.
-Exchange connectivity and benchmarks are not implemented yet.
+A paced loopback baseline measures UDP send to snapshot publication;
+exchange connectivity and component benchmarks remain out of scope.
 
 ## Build
 
@@ -16,6 +17,7 @@ Gradle Wrapper for the Gradle distribution and JDK 26 for the Gradle JVM.
 ```sh
 ./gradlew build
 ./gradlew :app:run
+./gradlew :app:loopbackBaseline
 ./gradlew :order-book:test
 ./gradlew :nasdaq-feed:test
 ```
@@ -25,7 +27,7 @@ Gradle Wrapper for the Gradle distribution and JDK 26 for the Gradle JVM.
 | [`:feed-core`](feed-core/README.md) | Protocol-independent order-event contract |
 | [`:order-book`](order-book/README.md) | Reference and packed single-writer books |
 | [`:nasdaq-feed`](nasdaq-feed/README.md) | In-memory MoldUDP64 framing, A/B arbitration, ITCH mapping, and book handoff |
-| [`:app`](app/README.md) | Strategy-facing snapshots, dual-leg UDP loopback demo, and integration tests |
+| [`:app`](app/README.md) | Strategy-facing snapshots, UDP loopback demo and paced baseline |
 | [`:benchmarks`](benchmarks/README.md) | JMH scaffold; workloads not yet implemented |
 
 Both books apply add, execute, and delete events through `OrderBook`. The

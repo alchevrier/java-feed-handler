@@ -7,6 +7,7 @@ import io.github.alchevrier.feed.nasdaq.MoldUdp64Arbiter.Leg;
 
 import java.nio.ByteBuffer;
 import java.util.Objects;
+import java.util.function.LongConsumer;
 
 /**
  * Wires a single-owner book and the SPSC handoff to the strategy view.
@@ -21,13 +22,22 @@ final class SnapshotBookPipeline {
     private final ItchBookHandoff.BookEventConsumer apply;
 
     SnapshotBookPipeline(ItchBookHandoff handoff, OrderBook book, TopOfBookPublisher publisher) {
+        this(handoff, book, publisher, sequence -> {});
+    }
+
+    /** The optional instrumentation runs on the writer after a successful publication. */
+    SnapshotBookPipeline(ItchBookHandoff handoff, OrderBook book, TopOfBookPublisher publisher,
+                         LongConsumer onPublished) {
         this.handoff = Objects.requireNonNull(handoff, "handoff");
         this.book = Objects.requireNonNull(book, "book");
         this.publisher = Objects.requireNonNull(publisher, "publisher");
+        Objects.requireNonNull(onPublished, "onPublished");
         apply = (sequence, event) -> {
             this.book.apply(event);
             this.book.readTopOfBook(quote);
-            this.publisher.publishApplied(sequence, quote);
+            if (this.publisher.publishApplied(sequence, quote)) {
+                onPublished.accept(sequence);
+            }
         };
     }
 

@@ -1,8 +1,9 @@
 # `:benchmarks`
 
-**Status: JMH scaffold only.** No benchmark workloads or results are checked
-in yet. This module depends on production components for measurement; production
-modules do not depend on it.
+**Status: JMH scaffold only.** The paced UDP-to-publication workload runs
+in [`:app`](../app/README.md#paced-reference-baseline), where it can reuse
+the loopback composition. This module depends on production components for
+measurement; production modules do not depend on it.
 
 ## Proposed measurement sequence
 

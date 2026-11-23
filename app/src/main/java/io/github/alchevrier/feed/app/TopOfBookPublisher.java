@@ -22,12 +22,11 @@ public final class TopOfBookPublisher {
     }
 
     /** Single book writer only. A competing write can only make the run stale. */
-    void publishApplied(long sequence, TopOfBookBuffer quote) {
+    boolean publishApplied(long sequence, TopOfBookBuffer quote) {
         Snapshot previous = latest.get();
-        if (previous.status() != Status.STALE) {
-            latest.compareAndSet(previous, new Snapshot(quote.snapshot(previous.quote()),
-                    OptionalLong.of(sequence), Status.LIVE, Optional.empty()));
-        }
+        return previous.status() != Status.STALE
+                && latest.compareAndSet(previous, new Snapshot(quote.snapshot(previous.quote()),
+                        OptionalLong.of(sequence), Status.LIVE, Optional.empty()));
     }
 
     /** Either pipeline thread can publish a terminal failure independently of the book ring. */
