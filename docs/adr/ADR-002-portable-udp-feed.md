@@ -52,7 +52,7 @@ instead of creating a packet, session array, and array of message views
 per datagram. The descriptor borrows the caller's bytes; validate all
 blocks before admitting any, then traverse the validated payload by offset.
 
-Release the descriptor before `accept` returns, including on rejection.
+Release the descriptor before `acceptAndForward` returns, including on rejection.
 Report pool exhaustion without falling back to heap allocation or advancing
 the sequence. Pending and emitted messages retain separately owned bytes,
 so they cannot pin a descriptor or observe later writes to a recycled
@@ -70,8 +70,8 @@ Emit raw messages to a synchronous sink using the sequence, leg, source
 buffer, offset, and length. The sink borrows the bytes only for the
 duration of the call and must not modify them or retain them. In-order
 messages use the input datagram directly, without copying a payload or
-creating a per-message buffer view. Keep the list-returning API as a
-collecting adapter for callers that need independently owned messages.
+creating a per-message buffer view. Require a sink in `acceptAndForward`; callers
+that need independently owned messages opt in via `acceptAndCopy`.
 Delivery is not reentrant. If the sink throws, mark the stream stale and
 propagate the failure; retry could deliver an event the sink already acted on.
 
@@ -86,7 +86,7 @@ Retaining whole datagrams instead would avoid the reorder copy, but
 would require ownership and release to span the upstream receiver and
 the arbiter. One delayed message could hold an entire datagram slot.
 Copying only reordered payloads keeps the caller free to reuse its input
-buffer as soon as `accept` returns, at the cost of a bounded copy and
+buffer as soon as `acceptAndForward` returns, at the cost of a bounded copy and
 preallocated storage for those messages.
 
 ## Portability boundary

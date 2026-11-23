@@ -49,7 +49,7 @@ class MoldUdp64PacketAllocatorSpec extends Specification {
             .put(session).putLong(1000L).putShort((short) 1).putShort((short) 1).put((byte) 65).flip()
 
         when:
-        arbiter.accept(A, datagram, 0)
+        arbiter.acceptAndCopy(A, datagram, 0)
 
         then:
         thrown(IllegalStateException)
@@ -59,7 +59,7 @@ class MoldUdp64PacketAllocatorSpec extends Specification {
 
         when:
         allocator.release(borrowed)
-        def messages = arbiter.accept(A, datagram, 1)
+        def messages = arbiter.acceptAndCopy(A, datagram, 1)
 
         then:
         messages*.sequence() == [1000L]

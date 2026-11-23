@@ -13,10 +13,10 @@ import java.util.OptionalLong;
  * copy, holds later sequences behind a gap, and stops delivery permanently
  * if the gap times out, storage fills, or the sink fails.
  *
- * <p>Call from one owner thread. The synchronous sink borrows in-order bytes
- * directly from the input; only pending messages need owned reorder storage.
- * The collecting overload copies all emitted messages for callers that retain
- * them after the call.
+ * <p>Call from one owner thread. With {@link #acceptAndForward}, the synchronous
+ * sink borrows in-order bytes directly from the input; only pending messages
+ * need owned reorder storage. {@link #acceptAndCopy} copies emitted messages
+ * for callers that retain them after the call.
  */
 public final class MoldUdp64Arbiter {
     private final byte[] session;
@@ -59,10 +59,10 @@ public final class MoldUdp64Arbiter {
         };
     }
 
-    /** Collects independently owned messages. Use the sink overload to avoid these copies. */
-    public List<Message> accept(Leg leg, ByteBuffer datagram, long nowNanos) {
+    /** Allocates a list and copies each emitted payload into independently owned storage. */
+    public List<Message> acceptAndCopy(Leg leg, ByteBuffer datagram, long nowNanos) {
         List<Message> emitted = new ArrayList<>();
-        accept(leg, datagram, nowNanos, (sequence, sourceLeg, source, offset, length) ->
+        acceptAndForward(leg, datagram, nowNanos, (sequence, sourceLeg, source, offset, length) ->
                 emitted.add(new Message(sequence, sourceLeg, source, offset, length)));
         return List.copyOf(emitted);
     }
@@ -75,7 +75,7 @@ public final class MoldUdp64Arbiter {
      * @throws IllegalStateException if the packet allocator is exhausted;
      *         the datagram has not been consumed
      */
-    public void accept(Leg leg, ByteBuffer datagram, long nowNanos, RawMessageSink sink) {
+    public void acceptAndForward(Leg leg, ByteBuffer datagram, long nowNanos, RawMessageSink sink) {
         requireIdle();
         Objects.requireNonNull(leg, "leg");
         Objects.requireNonNull(sink, "sink");

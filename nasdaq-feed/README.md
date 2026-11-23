@@ -22,11 +22,12 @@ end-of-session packets can reveal gaps but don't consume a sequence. If a gap
 times out or a new pending message would exceed capacity, delivery stops and
 the stream becomes stale.
 
-The synchronous sink borrows in-order bytes directly from the input buffer.
+`acceptAndForward` requires a synchronous sink that borrows in-order bytes
+directly from the input buffer.
 Out-of-order payloads are copied into heap-backed or preallocated reorder
-storage, so the caller can reuse the datagram after `accept` returns. Packet
-descriptor allocation is independently selectable. The list-returning API
-makes owned copies for callers that need to retain messages.
+storage, so the caller can reuse the datagram after the call returns. Packet
+descriptor allocation is independently selectable. `acceptAndCopy` allocates
+a list of owned copies for callers that need to retain messages.
 
 Run `./gradlew :nasdaq-feed:test` from the repository root. Tests use synthetic
 datagrams and caller-supplied time, with no sockets or capture files. See

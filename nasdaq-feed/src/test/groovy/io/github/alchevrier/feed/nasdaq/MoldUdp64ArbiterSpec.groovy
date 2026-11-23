@@ -19,7 +19,7 @@ class MoldUdp64ArbiterSpec extends Specification {
         def arbiter = new MoldUdp64Arbiter(SESSION.getBytes(US_ASCII), 1000, 1, 10)
 
         expect:
-        describe(arbiter.accept(A, packet(1000, "A"), 0)) == [[1000L, A, "A"]]
+        describe(arbiter.acceptAndCopy(A, packet(1000, "A"), 0)) == [[1000L, A, "A"]]
         arbiter.nextExpectedSequence() == 1001
     }
 
@@ -42,11 +42,11 @@ class MoldUdp64ArbiterSpec extends Specification {
         def arbiter = newArbiter(pooled)
 
         expect:
-        describe(arbiter.accept(firstLeg, packet(1000, "A", "E"), 0)) ==
+        describe(arbiter.acceptAndCopy(firstLeg, packet(1000, "A", "E"), 0)) ==
             [[1000L, firstLeg, "A"], [1001L, firstLeg, "E"]]
-        describe(arbiter.accept(otherLeg, packet(1001, "duplicate", "D"), 1)) ==
+        describe(arbiter.acceptAndCopy(otherLeg, packet(1001, "duplicate", "D"), 1)) ==
             [[1002L, otherLeg, "D"]]
-        arbiter.accept(otherLeg, packet(1000, "A", "E", "D"), 2).empty
+        arbiter.acceptAndCopy(otherLeg, packet(1000, "A", "E", "D"), 2).empty
         arbiter.nextExpectedSequence() == 1003
         arbiter.stale().empty
 
@@ -63,11 +63,11 @@ class MoldUdp64ArbiterSpec extends Specification {
         def arbiter = newArbiter(pooled)
 
         expect:
-        arbiter.accept(A, packet(1003, "later"), 0).empty
-        arbiter.accept(B, packet(1003, "duplicate"), 1).empty
-        arbiter.accept(A, packet(1002, "third"), 2).empty
+        arbiter.acceptAndCopy(A, packet(1003, "later"), 0).empty
+        arbiter.acceptAndCopy(B, packet(1003, "duplicate"), 1).empty
+        arbiter.acceptAndCopy(A, packet(1002, "third"), 2).empty
         arbiter.nextExpectedSequence() == 1000
-        describe(arbiter.accept(repairLeg, packet(1000, "first", "second", "duplicate"), 3)) ==
+        describe(arbiter.acceptAndCopy(repairLeg, packet(1000, "first", "second", "duplicate"), 3)) ==
             [[1000L, repairLeg, "first"], [1001L, repairLeg, "second"], [1002L, A, "third"], [1003L, A, "later"]]
         arbiter.nextExpectedSequence() == 1004
         arbiter.checkTimeout(100).empty
@@ -83,10 +83,10 @@ class MoldUdp64ArbiterSpec extends Specification {
         def arbiter = newArbiter(pooled)
 
         expect:
-        arbiter.accept(A, header(SESSION, 1000, count).flip(), 0).empty
+        arbiter.acceptAndCopy(A, header(SESSION, 1000, count).flip(), 0).empty
         arbiter.checkTimeout(20).empty
         arbiter.nextExpectedSequence() == 1000
-        arbiter.accept(B, header(SESSION, 1002, count).flip(), 21).empty
+        arbiter.acceptAndCopy(B, header(SESSION, 1002, count).flip(), 21).empty
         arbiter.checkTimeout(30).empty
         arbiter.checkTimeout(31).orElseThrow().with {
             reason() == GAP_TIMEOUT && missingSequence() == 1000 && lastEmittedSequence().empty
@@ -105,14 +105,14 @@ class MoldUdp64ArbiterSpec extends Specification {
         def arbiter = newArbiter(pooled)
 
         expect:
-        arbiter.accept(A, packet(1003, "fourth"), 0).empty
-        describe(arbiter.accept(B, packet(1000, "first"), 8)) == [[1000L, B, "first"]]
+        arbiter.acceptAndCopy(A, packet(1003, "fourth"), 0).empty
+        describe(arbiter.acceptAndCopy(B, packet(1000, "first"), 8)) == [[1000L, B, "first"]]
         arbiter.checkTimeout(9).empty
-        arbiter.accept(B, packet(1001, "too late"), 10).empty
+        arbiter.acceptAndCopy(B, packet(1001, "too late"), 10).empty
         arbiter.stale().orElseThrow().with {
             reason() == GAP_TIMEOUT && missingSequence() == 1001 && lastEmittedSequence().asLong == 1000
         }
-        arbiter.accept(B, packet(1001, "second", "third"), 11).empty
+        arbiter.acceptAndCopy(B, packet(1001, "second", "third"), 11).empty
         arbiter.nextExpectedSequence() == 1001
 
         where:
@@ -124,15 +124,15 @@ class MoldUdp64ArbiterSpec extends Specification {
         def arbiter = newArbiter(pooled, 1)
 
         expect:
-        describe(arbiter.accept(A, packet(1000, "first"), 0)) == [[1000L, A, "first"]]
-        arbiter.accept(A, packet(1002, "third"), 1).empty
-        arbiter.accept(B, packet(1002, "duplicate"), 2).empty
+        describe(arbiter.acceptAndCopy(A, packet(1000, "first"), 0)) == [[1000L, A, "first"]]
+        arbiter.acceptAndCopy(A, packet(1002, "third"), 1).empty
+        arbiter.acceptAndCopy(B, packet(1002, "duplicate"), 2).empty
         arbiter.stale().empty
-        arbiter.accept(B, packet(1003, "too many"), 3).empty
+        arbiter.acceptAndCopy(B, packet(1003, "too many"), 3).empty
         arbiter.stale().orElseThrow().with {
             reason() == REORDER_CAPACITY && missingSequence() == 1001 && lastEmittedSequence().asLong == 1000
         }
-        arbiter.accept(B, packet(1001, "second"), 4).empty
+        arbiter.acceptAndCopy(B, packet(1001, "second"), 4).empty
 
         where:
         pooled << [false, true]
@@ -143,12 +143,12 @@ class MoldUdp64ArbiterSpec extends Specification {
         def arbiter = newArbiter(pooled)
 
         expect:
-        arbiter.accept(A, badPacket, 0).empty
+        arbiter.acceptAndCopy(A, badPacket, 0).empty
         arbiter.malformedDatagrams() == malformed
         arbiter.wrongSessionDatagrams() == 1 - malformed
         arbiter.nextExpectedSequence() == 1000
         arbiter.checkTimeout(100).empty
-        describe(arbiter.accept(B, packet(1000, "valid"), 101)) == [[1000L, B, "valid"]]
+        describe(arbiter.acceptAndCopy(B, packet(1000, "valid"), 101)) == [[1000L, B, "valid"]]
 
         where:
         pooled << [false, true]
@@ -164,7 +164,7 @@ class MoldUdp64ArbiterSpec extends Specification {
         "a different session"          | header("SESSION999", 1003, 0).flip()                             | 0
     }
 
-    def "reads the datagram range in network order and owns delayed and emitted payloads (pooled: #pooled)"() {
+    def "acceptAndCopy returns owned payloads from the datagram range in network order (pooled: #pooled)"() {
         given:
         def arbiter = newArbiter(pooled)
         def incoming = ByteBuffer.allocateDirect(64).order(ByteOrder.LITTLE_ENDIAN)
@@ -173,7 +173,7 @@ class MoldUdp64ArbiterSpec extends Specification {
         int limit = incoming.limit()
 
         when:
-        def ahead = arbiter.accept(A, incoming, 0)
+        def ahead = arbiter.acceptAndCopy(A, incoming, 0)
 
         then:
         ahead.empty
@@ -183,11 +183,12 @@ class MoldUdp64ArbiterSpec extends Specification {
 
         when:
         incoming.put(3 + 22, (byte) 0)
-        def messages = arbiter.accept(B, packet(1000, ""), 1)
+        def repair = packet(1000, "first", "duplicate", "")
+        def messages = arbiter.acceptAndCopy(B, repair, 1)
+        repair.put(22, (byte) 0)
 
         then:
-        describe(messages) == [[1000L, B, ""], [1001L, A, "second"]]
-        describe(messages) == [[1000L, B, ""], [1001L, A, "second"]]
+        describe(messages) == [[1000L, B, "first"], [1001L, A, "second"], [1002L, B, ""]]
 
         when:
         messages[1].payload().put((byte) 0)
@@ -205,8 +206,8 @@ class MoldUdp64ArbiterSpec extends Specification {
             packetAllocator(pooled), reorderStorage(pooled))
 
         expect:
-        arbiter.accept(A, packet(Long.MIN_VALUE, "second"), 0).empty
-        describe(arbiter.accept(B, packet(Long.MAX_VALUE, "first"), 1)) ==
+        arbiter.acceptAndCopy(A, packet(Long.MIN_VALUE, "second"), 0).empty
+        describe(arbiter.acceptAndCopy(B, packet(Long.MAX_VALUE, "first"), 1)) ==
             [[Long.MAX_VALUE, B, "first"], [Long.MIN_VALUE, A, "second"]]
         arbiter.nextExpectedSequence() == Long.MIN_VALUE + 1
 
@@ -224,7 +225,7 @@ class MoldUdp64ArbiterSpec extends Specification {
         }
 
         when:
-        arbiter.accept(A, datagram, 0, sink)
+        arbiter.acceptAndForward(A, datagram, 0, sink)
 
         then:
         delivered == [[1000L, A, true, 22, 2, 65], [1001L, A, true, 26, 1, 67]]
@@ -246,12 +247,12 @@ class MoldUdp64ArbiterSpec extends Specification {
         }
 
         when:
-        arbiter.accept(B, first, 0, sink)
+        arbiter.acceptAndForward(B, first, 0, sink)
         first.put(22, (byte) 0)
-        arbiter.accept(A, packet(1000, "A"), 1, sink)
-        arbiter.accept(B, second, 2, sink)
+        arbiter.acceptAndForward(A, packet(1000, "A"), 1, sink)
+        arbiter.acceptAndForward(B, second, 2, sink)
         second.put(22, (byte) 0)
-        arbiter.accept(A, packet(1002, "C"), 3, sink)
+        arbiter.acceptAndForward(A, packet(1002, "C"), 3, sink)
 
         then:
         delivered.collect { it.take(3) } == [[1000L, A, 65], [1001L, B, 66], [1002L, A, 67], [1003L, B, 68]]
@@ -270,10 +271,10 @@ class MoldUdp64ArbiterSpec extends Specification {
                 throw failure
             }
         }
-        arbiter.accept(B, packet(1001, "B"), 0, sink)
+        arbiter.acceptAndForward(B, packet(1001, "B"), 0, sink)
 
         when:
-        arbiter.accept(A, packet(1000, "A"), 1, sink)
+        arbiter.acceptAndForward(A, packet(1000, "A"), 1, sink)
 
         then:
         def actual = thrown(IllegalStateException)
@@ -283,7 +284,7 @@ class MoldUdp64ArbiterSpec extends Specification {
         arbiter.stale().orElseThrow().reason() == SINK_FAILURE
 
         when:
-        arbiter.accept(A, packet(1000, "A", "B", "C"), 2, sink)
+        arbiter.acceptAndForward(A, packet(1000, "A", "B", "C"), 2, sink)
 
         then:
         attempted == (1000L..failsAt).toList()

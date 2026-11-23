@@ -35,10 +35,11 @@ and layout tradeoffs.
 The arbiter accepts datagram bytes from either leg and emits one ordered
 stream of raw ITCH messages. Its tests use synthetic datagrams and a
 controllable clock; no sockets or capture files are required. Packet
-descriptors and reorder storage can be heap-backed or pooled. A synchronous
-sink reads in-order payloads directly from the caller's buffer; only delayed
-payloads are copied into reorder storage. The collecting API still returns
-independently owned copies. See
+descriptors and reorder storage can be heap-backed or pooled. With
+`acceptAndForward`, a synchronous sink reads in-order payloads directly
+from the caller's buffer; only delayed
+payloads are copied into reorder storage. Call `acceptAndCopy` explicitly
+when you need independently owned copies. See
 [ADR-002](docs/adr/ADR-002-portable-udp-feed.md#accepted-first-slice-in-memory-arbitration).
 
 See [ADR-004](docs/adr/ADR-004-build-toolchain-monorepo.md) for the toolchain and module boundaries.
