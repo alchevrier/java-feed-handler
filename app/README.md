@@ -1,14 +1,13 @@
 # `:app`
 
-**Status: in-memory integration tests only.** The tests connect the arbiter
-and ITCH mapper to both order books using synthetic datagrams. They cover
-both direct callbacks and the bounded mapper-to-book ring, including
-cross-thread slot reuse, saturation while a slot is held, and competing
-producer and book failures. Run them with
-`./gradlew :app:test` from the repository root. There is no application
-entry point or runnable loopback demo yet.
+Run `./gradlew :app:run` from the repository root. The demo binds two
+ephemeral UDP ports on loopback and sends synthetic MoldUDP64 datagrams.
+The first run shows A/B gap repair and applies sequences `1000`, `1001`,
+and `1002` in order. The second applies only `1000` and reports
+`STALE GAP_TIMEOUT` at `1001`. No exchange connection or capture file
+is needed.
 
-## Planned loopback flow
+## Loopback flow
 
 ```mermaid
 flowchart LR
@@ -21,15 +20,18 @@ flowchart LR
     Arbiter --> Mapper["ITCH mapper"]
     Mapper --> Events["Preallocated SPSC book-event ring"]
     Events --> Book["Single-writer OrderBook"]
-    Book --> Sink["Snapshot and status publisher"]
+    Book --> Output["Demo output: applied bid and stale status"]
 ```
 
-The planned demo will exercise the portable UDP-to-snapshot path with synthetic
-datagrams. The app will compose the arbiter and ITCH mapper from
-[`nasdaq-feed`](../nasdaq-feed/README.md), the event contract from
-[`feed-core`](../feed-core/README.md), and either
-[`order-book`](../order-book/README.md) implementation. The arbiter and mapper
-will share a thread; the book will own its state on a separate thread.
+Each `DatagramChannel` has its own receiver thread. The arbiter borrows
+buffers from the two bounded ingress queues and returns them after
+processing. If a leg runs out of buffers, the receiver counts a drop on
+that leg; the other leg can still fill the gap. A full book-event ring
+instead makes the run stale immediately.
+
+The demo uses the packed book. `./gradlew :app:test` also exercises both
+book layouts in memory and checks ingress buffer lifetimes and drops on
+loopback.
 
 See [ADR-002](../docs/adr/ADR-002-portable-udp-feed.md) for the topology
 and overload policy.

@@ -3,7 +3,8 @@
 Validates MoldUDP64 datagrams, merges two redundant legs, and maps ordered
 ITCH add, execute, and delete payloads into `MarketMessage` events for one
 configured stock locate. A bounded handoff can transfer decoded updates
-to a separate book thread. Live UDP ingress is not implemented yet.
+to a separate book thread. Socket ingress lives in the
+[`app` loopback demo](../app/README.md).
 
 ```mermaid
 flowchart LR

@@ -1,7 +1,7 @@
 # ADR-002: Use portable UDP ingress and merge A/B before the book
 
-**Status: Accepted for in-memory framing, A/B arbitration, ITCH mapping, and the mapper-to-book handoff.**
-Live ingress, ingress handoffs, and book publication remain Proposed.
+**Status: Accepted through dual-leg loopback UDP ingress and the book handoff.**
+Production ingress configuration and snapshot publication remain Proposed.
 
 **Depends on:** [ADR-001](ADR-001-reference-order-book.md)
 
@@ -143,6 +143,28 @@ slot reuse. Copying a synchronous borrowed event into an owned queue slot
 would be safe too, at the cost of staging the same fields twice. This slice
 uses synthetic datagrams and caller-owned threads; sockets, thread loops,
 and snapshot publication remain out of scope.
+
+### Accepted slice: dual-leg UDP ingress on loopback
+
+Bind a blocking `DatagramChannel` per leg to an ephemeral loopback port.
+Each receiver has one working buffer and a bounded pool of datagram buffers.
+After receive, transfer ownership only if a replacement buffer is available.
+Otherwise count the drop on that leg and keep the working buffer. This also
+covers capacity occupied by a buffer currently borrowed by the arbiter.
+Return a borrowed buffer only after synchronous admission finishes, including
+if it throws. Size buffers for a full UDP datagram to avoid silent truncation.
+
+Use bounded `ArrayBlockingQueue`s for the ready and free buffers in this
+reference adapter. They do not allocate a queue node on every transfer, but
+they use locks. Neither this demo nor the JDK receive call is a zero-allocation
+claim. One arbiter thread polls at most one datagram per leg per pass and
+checks the gap timeout even when both sockets are quiet. A separate book
+thread owns the book. Closing the channels wakes blocking receivers.
+
+The loopback demo uses synthetic datagrams to show A/B gap repair and the
+terminal timeout when a gap cannot be repaired. Keep multicast, exchange
+connectivity, production configuration, and a public snapshot publisher
+out of scope.
 
 ## Portability boundary
 
