@@ -1,7 +1,7 @@
 # ADR-002: Use portable UDP ingress and merge A/B before the book
 
-**Status: Accepted for in-memory framing, A/B arbitration, and ITCH mapping.**
-Live ingress, threaded handoffs, and book publication remain Proposed.
+**Status: Accepted for in-memory framing, A/B arbitration, ITCH mapping, and the mapper-to-book handoff.**
+Live ingress, ingress handoffs, and book publication remain Proposed.
 
 **Depends on:** [ADR-001](ADR-001-reference-order-book.md)
 
@@ -120,6 +120,29 @@ both feed legs through the arbiter and mapper into both books, including
 duplicate suppression and a failure that prevents later events from being
 applied. Live UDP, threaded handoffs, and snapshot publication remain out
 of scope for this slice.
+
+### Accepted slice: bounded in-memory mapper-to-book handoff
+
+Give arbitration and decoding to one producer, and book updates to one
+consumer. Keep the synchronous targets as a baseline. For the threaded
+path, write each decoded update directly into a preallocated SPSC ring
+slot, with the MoldUDP64 sequence stored beside the event. Skipped
+messages advance the arbiter without claiming a slot. Publish only after
+the slot is filled, and release only after the book callback returns.
+Both cursor transfers establish visibility across the threads.
+
+On a full ring, stop the run at the first event that could not be published.
+Expose stale status outside the ring; an already borrowed event remains
+valid until the callback exits, but do not drain queued work on a stale
+run. A caller must not treat a book from that run as current. A fresh run
+requires fresh state. Do not retry or fall back to heap allocation.
+
+An immutable event in a bounded queue would also transfer ownership safely
+and is a useful reference for future comparisons, but it does not exercise
+slot reuse. Copying a synchronous borrowed event into an owned queue slot
+would be safe too, at the cost of staging the same fields twice. This slice
+uses synthetic datagrams and caller-owned threads; sockets, thread loops,
+and snapshot publication remain out of scope.
 
 ## Portability boundary
 

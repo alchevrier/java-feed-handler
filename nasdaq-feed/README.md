@@ -2,8 +2,8 @@
 
 Validates MoldUDP64 datagrams, merges two redundant legs, and maps ordered
 ITCH add, execute, and delete payloads into `MarketMessage` events for one
-configured stock locate. Live UDP ingress and threaded handoffs are not
-implemented yet.
+configured stock locate. A bounded handoff can transfer decoded updates
+to a separate book thread. Live UDP ingress is not implemented yet.
 
 ```mermaid
 flowchart LR
@@ -14,7 +14,10 @@ flowchart LR
     Arbiter -->|Ahead of a gap| Pending["Bounded reorder storage"]
     Pending -->|Gap closes| Sink
     Sink --> Mapper["ITCH mapper"]
-    Mapper --> Target["Event target: heap or reusable slot"]
+    Mapper --> Target["Synchronous target: heap or reusable slot"]
+    Mapper --> Ring["Preallocated SPSC ring"]
+    Ring --> Book["Book callback on consumer thread"]
+    Ring -->|Full| Stale
     Arbiter -->|Unrecoverable gap or sink failure| Stale["Terminal stale status"]
 ```
 
@@ -35,8 +38,14 @@ The mapper reads the borrowed byte range in network byte order without
 retaining it. Recognized non-book messages and order updates for other stock
 locates consume sequence numbers without changing the tracked book. Malformed
 payloads, unknown types, and unsupported mutations of the tracked book fail
-the sink and mark the stream stale. Reusable events are valid only during
-their consumer callback.
+the sink and mark the stream stale.
+
+`ItchBookHandoff` writes decoded fields and their transport sequence
+directly into the ring. The producer can't overwrite a slot until the
+book callback returns. Reusable events are valid only during their
+callback. A full ring stops the run and reports the unqueued sequence
+through `stale()`, independently of queue space. A callback already in
+progress may finish; further polling never drains a stale run.
 
 Run `./gradlew :nasdaq-feed:test` from the repository root. Tests use synthetic
 datagrams and caller-supplied time, with no sockets or capture files. See

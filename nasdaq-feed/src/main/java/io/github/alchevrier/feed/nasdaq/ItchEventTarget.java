@@ -40,7 +40,7 @@ public interface ItchEventTarget {
     }
 
     /**
-     * Reuses one slot per event kind. Use from one thread; the consumer may
+     * Reuses one slot with a view per event kind. Use from one thread; the consumer may
      * read an event only during its callback and must not reenter this target.
      */
     static ItchEventTarget reusable(Consumer<? super MarketMessage> consumer) {
@@ -50,9 +50,7 @@ public interface ItchEventTarget {
 
 final class ReusableItchEventTarget implements ItchEventTarget {
     private final Consumer<? super MarketMessage> consumer;
-    private final AddSlot add = new AddSlot();
-    private final ExecuteSlot execute = new ExecuteSlot();
-    private final DeleteSlot delete = new DeleteSlot();
+    private final ItchEventSlot slot = new ItchEventSlot();
     private boolean delivering;
 
     ReusableItchEventTarget(Consumer<? super MarketMessage> consumer) {
@@ -62,26 +60,19 @@ final class ReusableItchEventTarget implements ItchEventTarget {
     @Override
     public void add(long reference, Side side, long shares, long priceUnits) {
         requireIdle();
-        add.reference = reference;
-        add.side = side;
-        add.shares = shares;
-        add.priceUnits = priceUnits;
-        deliver(add);
+        deliver(slot.add(reference, side, shares, priceUnits));
     }
 
     @Override
     public void execute(long reference, long executedShares) {
         requireIdle();
-        execute.reference = reference;
-        execute.shares = executedShares;
-        deliver(execute);
+        deliver(slot.execute(reference, executedShares));
     }
 
     @Override
     public void delete(long reference) {
         requireIdle();
-        delete.reference = reference;
-        deliver(delete);
+        deliver(slot.delete(reference));
     }
 
     private void requireIdle() {
@@ -97,31 +88,5 @@ final class ReusableItchEventTarget implements ItchEventTarget {
         } finally {
             delivering = false;
         }
-    }
-
-    private static final class AddSlot implements MarketMessage.Add {
-        private long reference;
-        private Side side;
-        private long shares;
-        private long priceUnits;
-
-        @Override public long orderReference() { return reference; }
-        @Override public Side side() { return side; }
-        @Override public long shares() { return shares; }
-        @Override public long priceUnits() { return priceUnits; }
-    }
-
-    private static final class ExecuteSlot implements MarketMessage.Execute {
-        private long reference;
-        private long shares;
-
-        @Override public long orderReference() { return reference; }
-        @Override public long executedShares() { return shares; }
-    }
-
-    private static final class DeleteSlot implements MarketMessage.Delete {
-        private long reference;
-
-        @Override public long orderReference() { return reference; }
     }
 }

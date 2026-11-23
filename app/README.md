@@ -1,9 +1,12 @@
 # `:app`
 
 **Status: in-memory integration tests only.** The tests connect the arbiter
-and ITCH mapper to both order books using synthetic datagrams. Run them with
-`./gradlew :app:test` from the repository root. There is no application entry
-point or runnable loopback demo yet.
+and ITCH mapper to both order books using synthetic datagrams. They cover
+both direct callbacks and the bounded mapper-to-book ring, including
+cross-thread slot reuse, saturation while a slot is held, and competing
+producer and book failures. Run them with
+`./gradlew :app:test` from the repository root. There is no application
+entry point or runnable loopback demo yet.
 
 ## Planned loopback flow
 
@@ -16,7 +19,7 @@ flowchart LR
     QA --> Arbiter["A/B arbiter"]
     QB --> Arbiter
     Arbiter --> Mapper["ITCH mapper"]
-    Mapper --> Events["Bounded book-event queue"]
+    Mapper --> Events["Preallocated SPSC book-event ring"]
     Events --> Book["Single-writer OrderBook"]
     Book --> Sink["Snapshot and status publisher"]
 ```
@@ -28,5 +31,5 @@ datagrams. The app will compose the arbiter and ITCH mapper from
 [`order-book`](../order-book/README.md) implementation. The arbiter and mapper
 will share a thread; the book will own its state on a separate thread.
 
-See [ADR-002](../docs/adr/ADR-002-portable-udp-feed.md) for the proposed topology
-and backpressure policy.
+See [ADR-002](../docs/adr/ADR-002-portable-udp-feed.md) for the topology
+and overload policy.
